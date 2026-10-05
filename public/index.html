@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Medical Scribe</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, 'Segoe UI', sans-serif; }
+  body { background: #f4f6f8; display: flex; justify-content: center; padding: 40px 20px; }
+  .container { max-width: 760px; width: 100%; }
+  h1 { color: #1a3c5e; margin-bottom: 24px; }
+  .card { background: #fff; border-radius: 10px; padding: 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 20px; }
+  button { background: #1a73e8; color: #fff; border: none; padding: 12px 24px; border-radius: 8px; font-size: 16px; cursor: pointer; }
+  button:disabled { background: #9db9d9; cursor: not-allowed; }
+  button.stop { background: #d93025; }
+  #status { margin-top: 12px; color: #555; }
+  h2 { color: #1a3c5e; margin-bottom: 10px; font-size: 18px; }
+  ul { padding-left: 20px; }
+  li { margin-bottom: 6px; color: #333; }
+  #transcript { white-space: pre-wrap; color: #444; line-height: 1.5; max-height: 200px; overflow-y: auto; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>🩺 Medical Scribe</h1>
+  <div class="card">
+    <button id="recordBtn">Start Recording</button>
+    <p id="status"></p>
+    <div style="margin-top:14px">
+      <label for="language">Conversation language: </label>
+      <select id="language">
+        <option value="auto">Auto-detect</option>
+        <option value="hi">Hindi / Maithili (Hindi script)</option>
+        <option value="en">English</option>
+        <option value="bn">Bengali</option>
+        <option value="ta">Tamil</option>
+        <option value="te">Telugu</option>
+        <option value="mr">Marathi</option>
+        <option value="gu">Gujarati</option>
+      </select>
+    </div>
+  </div>
+  <div class="card" id="transcriptCard" style="display:none">
+    <h2>Transcript</h2>
+    <p id="transcript"></p>
+  </div>
+  <div class="card" id="notesCard" style="display:none">
+    <h2>Symptoms</h2><ul id="symptoms"></ul><br>
+    <h2>Remedies Suggested</h2><ul id="remedies"></ul><br>
+    <h2>Medications Prescribed</h2><ul id="medications"></ul>
+  </div>
+</div>
+<script>
+let mediaRecorder, chunks = [], recording = false;
+const btn = document.getElementById('recordBtn');
+const status = document.getElementById('status');
+
+btn.addEventListener('click', async () => {
+  if (!recording) {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      chunks = [];
+      mediaRecorder.ondataavailable = e => chunks.push(e.data);
+      mediaRecorder.onstop = processRecording;
+      mediaRecorder.start();
+      recording = true;
+      btn.textContent = 'Stop Recording';
+      btn.classList.add('stop');
+      status.textContent = 'Recording…';
+    } catch {
+      status.textContent = 'Microphone access denied.';
+    }
+  } else {
+    mediaRecorder.stop();
+    mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    recording = false;
+    btn.textContent = 'Start Recording';
+    btn.classList.remove('stop');
+    btn.disabled = true;
+    status.textContent = 'Processing audio…';
+  }
+});
+
+async function processRecording() {
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  const form = new FormData();
+  form.append('audio', blob, 'recording.webm');
+  form.append('language', document.getElementById('language').value);
+  try {
+    const tRes = await fetch('/api/transcribe', { method: 'POST', body: form });
+    const { transcript, error } = await tRes.json();
+    if (error) throw new Error(error);
+    document.getElementById('transcriptCard').style.display = 'block';
+    document.getElementById('transcript').textContent = transcript;
+    status.textContent = 'Extracting clinical notes…';
+
+    const eRes = await fetch('/api/extract', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transcript }),
+    });
+    const notes = await eRes.json();
+    fill('symptoms', notes.symptoms);
+    fill('remedies', notes.remedies);
+    fill('medications', notes.medications);
+    document.getElementById('notesCard').style.display = 'block';
+    status.textContent = 'Done.';
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+  }
+  btn.disabled = false;
+}
+
+function fill(id, items) {
+  const ul = document.getElementById(id);
+  ul.innerHTML = '';
+  (items && items.length ? items : ['—']).forEach(i => {
+    const li = document.createElement('li');
+    li.textContent = i;
+    ul.appendChild(li);
+  });
+}
+</script>
+</body>
+</html>
